@@ -204,7 +204,7 @@ def roles(req: func.HttpRequest) -> func.HttpResponse:
         response = collection.find_one({"user": user_id})
         logging.info("Response: {response}".format(response=response))
         if response:
-            roles = response.get("roles", ["admin"])
+            roles = response.get("roles", [])
             logging.info(f"User found. Attached roles: {roles}")
             return func.HttpResponse(json.dumps({"roles": roles}), status_code=200, mimetype="application/json")
 
