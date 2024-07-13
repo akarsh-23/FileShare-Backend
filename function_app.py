@@ -8,6 +8,7 @@ import azure.functions as func
 from azure.storage.blob import BlobServiceClient, BlobType, BlobSasPermissions, generate_blob_sas
 import os
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, PyMongoError
 
 app = func.FunctionApp()
 
@@ -182,3 +183,88 @@ def download_files(req: func.HttpRequest) -> func.HttpResponse:
 
     except Exception as e:
         return func.HttpResponse(f"Error occurred: {str(e)}", status_code=500)
+
+@app.route(route="roles", auth_level=func.AuthLevel.ANONYMOUS)
+def roles(req: func.HttpRequest) -> func.HttpResponse:
+    # return func.HttpResponse(json.dumps({"roles":["admin"]}), status_code=200, mimetype="application/json")
+    logging.info('Python HTTP trigger function processed a request.')
+    try:
+        # Parse the request body
+        data = json.loads(req.get_body().decode('utf-8'))
+        logging.info("data: {data}".format(data=json.dumps(data)))
+
+        # Extract userId
+        user_id = data.get("userId")
+        if not user_id:
+            logging.error("Missing 'userId' in 'clientPrincipal'")
+            raise ValueError("Missing 'userId' in 'clientPrincipal'")
+
+        # Check if the user exists in the database
+        collection = database["users"]
+        response = collection.find_one({"user": user_id})
+        logging.info("Response: {response}".format(response=response))
+        if response:
+            roles = response.get("roles", ["admin"])
+            logging.info(f"User found. Attached roles: {roles}")
+            return func.HttpResponse(json.dumps({"roles": roles}), status_code=200, mimetype="application/json")
+
+        # Extract other details from clientPrincipal
+        identity_provider = data.get("identityProvider")
+        claims = data.get("claims", [])
+        claims_dict = {claim.get("typ"): claim.get("val") for claim in claims}
+        
+        email = claims_dict.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")
+        name = claims_dict.get("name")
+        picture = claims_dict.get("picture")
+
+        # Prepare the document to insert into the database
+        document = {
+            "name": name,
+            "user": user_id,
+            "email": email,
+            "picture": picture,
+            "identity_provider": identity_provider,
+        }
+
+        # Insert the document into the database
+        result = collection.insert_one(document)
+        logging.info(f"Inserted document with id: {result.inserted_id}")
+
+        roles = document.get("roles", [])
+        return func.HttpResponse(json.dumps({"roles": roles}), status_code=200, mimetype="application/json")
+
+    except json.JSONDecodeError:
+        logging.error("Failed to decode JSON from request body")
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid JSON format"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except ValueError as ve:
+        logging.error(f"ValueError: {ve}")
+        return func.HttpResponse(
+            json.dumps({"error": str(ve)}),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except ConnectionFailure:
+        logging.error("Failed to connect to MongoDB")
+        return func.HttpResponse(
+            json.dumps({"error": "Failed to connect to database"}),
+            status_code=500,
+            mimetype="application/json"
+        )
+    except PyMongoError as e:
+        logging.error(f"MongoDB error: {e}")
+        return func.HttpResponse(
+            json.dumps({"error": "Database error occurred"}),
+            status_code=500,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
+        return func.HttpResponse(
+            json.dumps({"error": "An unexpected error occurred"}),
+            status_code=500,
+            mimetype="application/json"
+        )
