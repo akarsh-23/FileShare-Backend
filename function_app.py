@@ -268,3 +268,59 @@ def roles(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
+
+@app.route(route="user/{user_id}", auth_level=func.AuthLevel.ANONYMOUS)
+def get_user(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Python HTTP trigger function processed a request.')
+    try:
+        # Extract userId
+        user_id = req.route_params.get("user_id")
+        logging.info(json.dumps(dict(req.headers), indent=4))
+        if not user_id:
+            logging.error("Missing 'userId'")
+            raise ValueError("Missing 'userId'")
+
+        # Check if the user exists in the database
+        collection = database["users"]
+        response = collection.find_one({"user": user_id})
+        logging.info("Response: {response}".format(response=response))
+        if response:
+            logging.info(f"User found. User: {response}")
+            return func.HttpResponse(json.dumps(response, default=str), status_code=200, mimetype="application/json")
+        return func.HttpResponse(json.dumps({"error": "User not found"}), status_code=404, mimetype="application/json")
+
+    except json.JSONDecodeError:
+        logging.error("Failed to decode JSON")
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid JSON format"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except ValueError as ve:
+        logging.error(f"ValueError: {ve}")
+        return func.HttpResponse(
+            json.dumps({"error": str(ve)}),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except ConnectionFailure:
+        logging.error("Failed to connect to MongoDB")
+        return func.HttpResponse(
+            json.dumps({"error": "Failed to connect to database"}),
+            status_code=500,
+            mimetype="application/json"
+        )
+    except PyMongoError as e:
+        logging.error(f"MongoDB error: {e}")
+        return func.HttpResponse(
+            json.dumps({"error": "Database error occurred"}),
+            status_code=500,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
+        return func.HttpResponse(
+            json.dumps({"error": "An unexpected error occurred"}),
+            status_code=500,
+            mimetype="application/json"
+        )
