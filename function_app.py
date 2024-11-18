@@ -348,7 +348,7 @@ def response(req: func.HttpRequest) -> func.HttpResponse:
     logging.info("MongoDB connection URI constructed")
 
     # Set environment variables
-    os.environ["OPENAI_API_KEY"] = "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"
+    os.environ["OPENAI_API_KEY"] = "key"
     logging.info("Environment variables set for OpenAI API")
 
     # Initialize LLM and embedding model
