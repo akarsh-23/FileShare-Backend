@@ -5,3 +5,10 @@
 azure-functions
 azure-storage-blob
 pymongo
+llama-index
+llama-index-embeddings-openai
+llama-index-storage-docstore-mongodb
+motor
+llama-index-storage-index-store-mongodb
+llama-index-vector-stores-mongodb
+llama-index-vector-stores-azurecosmosmongo

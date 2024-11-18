@@ -10,6 +10,18 @@ import os
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, PyMongoError
 
+import os, pymongo
+import logging
+from llama_index.core import Settings, VectorStoreIndex, get_response_synthesizer
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.vector_stores.azurecosmosmongo import AzureCosmosDBMongoDBVectorSearch
+from urllib.parse import quote_plus
+from llama_index.core.retrievers import VectorIndexRetriever
+from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.core.postprocessor import SimilarityPostprocessor
+from llama_index.core.indices.query.query_transform.base import StepDecomposeQueryTransform
+
 app = func.FunctionApp()
 
 # Initialize Azure Blob Service Client
@@ -40,7 +52,7 @@ def upload(req: func.HttpRequest) -> func.HttpResponse:
             raise ValueError("User and folder parameters are required.")
         else:
             logging.info(f"User: {user}, Folder: {folder}")
-        
+
         # Check if container exists, create if not
         container_client = blob_service_client.get_container_client(container_name)
         if not container_client.exists():
@@ -62,14 +74,14 @@ def upload(req: func.HttpRequest) -> func.HttpResponse:
             "message": f"File(s) has been uploaded successfully."
         }
         return func.HttpResponse(json.dumps(response_message), status_code=200, mimetype="application/json")
-    
+
     except ValueError as ve:
         logging.error(f"ValueError: {ve}")
         error_message = {
             "error": f"ValueError: {ve}"
         }
         return func.HttpResponse(json.dumps(error_message), status_code=400, mimetype="application/json")
-    
+
     except KeyError as ke:
         logging.error(f"KeyError: {ke}")
         error_message = {
@@ -84,10 +96,10 @@ def upload(req: func.HttpRequest) -> func.HttpResponse:
         }
         return func.HttpResponse(json.dumps(error_message), status_code=500, mimetype="application/json")
 
-@app.blob_trigger(arg_name="blob", path="fileshare/{user}/{folder}/{filename}", connection="AzureWebJobsStorage") 
+@app.blob_trigger(arg_name="blob", path="fileshare/{user}/{folder}/{filename}", connection="AzureWebJobsStorage")
 def upload_data(blob: func.InputStream):
     logging.info(f"Python blob trigger function processed blob Name: {blob.name} Blob Size: {blob.length} bytes")
-    
+
     try:
         blob = blob.name
         # Assuming the path is "fileshare/{user}/{folder}/{filename}"
@@ -96,7 +108,7 @@ def upload_data(blob: func.InputStream):
             raise ValueError("Blob name does not match expected format 'fileshare/{user}/{folder}/{filename}'")
 
         container, user, folder, filename = parts
-        
+
         # Generate SAS URL for the blob
         sas_token = generate_blob_sas(
             account_name=blob_service_client.account_name,
@@ -129,7 +141,7 @@ def upload_data(blob: func.InputStream):
     except Exception as e:
         logging.error(f"Error processing blob {blob.name}: {e}")
         raise e
-    
+
 @app.route(route="files/{user}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def get_files(req: func.HttpRequest) -> func.HttpResponse:
     try:
@@ -150,35 +162,35 @@ def get_files(req: func.HttpRequest) -> func.HttpResponse:
             "error": "Error retrieving files."
         }
         return func.HttpResponse(json.dumps(error_message), status_code=500, mimetype="application/json")
-    
+
 @app.route(route="files/download-selected", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def download_files(req: func.HttpRequest) -> func.HttpResponse:
     try:
         # Parse the list of selected image filenames from the request body
         req_body = req.get_json()
         image_filenames = req_body.get("selected_images", [])
-        
+
         if not image_filenames:
             return func.HttpResponse("No image filenames provided.", status_code=400)
-        
+
         # Create a BytesIO buffer to hold the ZIP file in memory
         zip_buffer = io.BytesIO()
-        
+
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for filename in image_filenames:
                 blob_name = f"{filename}"
                 blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
                 blob_data = blob_client.download_blob().readall()
                 zip_file.writestr(filename, blob_data)
-        
+
         # Seek to the beginning of the BytesIO buffer to read the data
         zip_buffer.seek(0)
-        
+
         # Create HTTP response with ZIP file
         response = func.HttpResponse(zip_buffer.read(), status_code=200)
         response.headers["Content-Disposition"] = "attachment; filename=selected_images.zip"
         response.headers["Content-Type"] = "application/zip"
-        
+
         return response
 
     except Exception as e:
@@ -212,7 +224,7 @@ def roles(req: func.HttpRequest) -> func.HttpResponse:
         identity_provider = data.get("identityProvider")
         claims = data.get("claims", [])
         claims_dict = {claim.get("typ"): claim.get("val") for claim in claims}
-        
+
         email = claims_dict.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")
         name = claims_dict.get("name")
         picture = claims_dict.get("picture")
@@ -323,4 +335,83 @@ def get_user(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({"error": "An unexpected error occurred"}),
             status_code=500,
             mimetype="application/json"
+        )
+
+@app.route(route="response", auth_level=func.AuthLevel.ANONYMOUS)
+def response(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Python HTTP trigger function processed a request.')
+
+    # MongoDB connection setup
+    username = quote_plus("akarsh23")
+    password = quote_plus("Saksham@2301")
+    uri = f"mongodb+srv://{username}:{password}@ai-chat.mongocluster.cosmos.azure.com?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+    logging.info("MongoDB connection URI constructed")
+
+    # Set environment variables
+    os.environ["OPENAI_API_KEY"] = "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"
+    logging.info("Environment variables set for OpenAI API")
+
+    # Initialize LLM and embedding model
+    Settings.llm = OpenAI()
+    Settings.embed_model = OpenAIEmbedding()
+    logging.info("OpenAI LLM and embedding model initialized")
+
+    # Setup Vector Store
+    logging.debug("Connecting to MongoDB at %s", uri)
+    client = pymongo.MongoClient(str(uri))
+    vector_store = AzureCosmosDBMongoDBVectorSearch(
+        client,
+        db_name="vector_store",
+        collection_name="data",
+        id_key="_id",
+        embedding_key="embedding",
+        metadata_key="metadata"
+    )
+    logging.info("Vector store initialized successfully")
+
+    # Create index from vector store
+    index = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        embed_model=Settings.embed_model,
+        show_proress=True
+    )
+    logging.info("Vector store index created")
+
+    # Setup retriever and query engine
+    retriever = VectorIndexRetriever(index=index, similarity_top_k=100)
+    response_synthesizer = get_response_synthesizer(llm=Settings.llm, streaming=True)
+    query_engine = RetrieverQueryEngine(
+        retriever=retriever,
+        response_synthesizer=response_synthesizer,
+        node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.7)],
+    )
+    logging.info("Retriever and query engine initialized")
+
+    # Add query transformation if needed
+    step_decompose_transform = StepDecomposeQueryTransform(llm=Settings.llm)
+    logging.info("StepDecomposeQueryTransform initialized")
+
+    query = req.params.get("query", "how can you help me?")
+    logging.info("Received request with query: %s", query)
+
+    try:
+        # Execute query
+        logging.info("Executing query: %s", query)
+        result = query_engine.query(query)
+        logging.info("Query executed successfully")
+
+    except Exception as e:
+        logging.error("An error occurred during request processing: %s", str(e))
+        raise e
+
+    response = {
+        "data": result
+    }
+    logging.info("Response: {response}".format(response=response))
+    if response:
+        return func.HttpResponse(json.dumps(response, default=str), status_code=200, mimetype="application/json")
+    else:
+        return func.HttpResponse(
+             f"This {result} triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
+             status_code=200
         )
