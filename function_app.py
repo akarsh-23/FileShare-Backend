@@ -20,7 +20,10 @@ from urllib.parse import quote_plus
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.postprocessor import SimilarityPostprocessor
-from llama_index.core.indices.query.query_transform.base import StepDecomposeQueryTransform
+
+from llama_index.core import Document, StorageContext, Settings
+from llama_index.core.ingestion import IngestionPipeline, DocstoreStrategy
+from llama_index.storage.docstore.mongodb import MongoDocumentStore
 
 app = func.FunctionApp()
 
@@ -347,10 +350,6 @@ def response(req: func.HttpRequest) -> func.HttpResponse:
     uri = f"mongodb+srv://{username}:{password}@ai-chat.mongocluster.cosmos.azure.com?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
     logging.info("MongoDB connection URI constructed")
 
-    # Set environment variables
-
-    logging.info("Environment variables set for OpenAI API")
-
     # Initialize LLM and embedding model
     Settings.llm = OpenAI()
     Settings.embed_model = OpenAIEmbedding()
@@ -365,7 +364,8 @@ def response(req: func.HttpRequest) -> func.HttpResponse:
         collection_name="data",
         id_key="_id",
         embedding_key="embedding",
-        metadata_key="metadata"
+        metadata_key="metadata",
+        cosmos_search_kwargs={"kind":"vector-ivf"}
     )
     logging.info("Vector store initialized successfully")
 
@@ -386,10 +386,6 @@ def response(req: func.HttpRequest) -> func.HttpResponse:
         node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.7)],
     )
     logging.info("Retriever and query engine initialized")
-
-    # Add query transformation if needed
-    step_decompose_transform = StepDecomposeQueryTransform(llm=Settings.llm)
-    logging.info("StepDecomposeQueryTransform initialized")
 
     query = req.params.get("query", "how can you help me?")
     logging.info("Received request with query: %s", query)
